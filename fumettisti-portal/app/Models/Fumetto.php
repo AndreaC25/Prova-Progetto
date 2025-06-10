@@ -4,145 +4,97 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Storage;
 
 class Fumetto extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
+
+    protected $table = 'fumetti'; // Forza il nome tabella
 
     protected $fillable = [
-        'user_id',
         'title',
+        'plot',
         'issue_number',
         'publication_year',
+        'price',
         'cover_image',
-        'plot',
         'magazine_id',
+        'user_id',
         'is_published',
         'published_at'
     ];
 
     protected $casts = [
+        'publication_year' => 'integer',
+        'issue_number' => 'integer',
+        'price' => 'decimal:2',
         'is_published' => 'boolean',
-        'published_at' => 'datetime',
-        'publication_year' => 'integer'
+        'published_at' => 'datetime'
     ];
 
-    /**
-     * Relazione con l'utente (fumettista)
-     */
+    protected $dates = [
+        'published_at',
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
+
+    // Relationships
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * Relazione con la rivista
-     */
     public function magazine()
     {
         return $this->belongsTo(Magazine::class);
     }
 
-    /**
-     * Relazione many-to-many con le categorie
-     */
     public function categories()
     {
-        return $this->belongsToMany(Category::class, 'fumetto_category');
+        return $this->belongsToMany(Category::class, 'fumetto_categories');
     }
 
-    /**
-     * Accessor per l'URL dell'immagine di copertina
-     */
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+
+    public function approvedReviews()
+    {
+        return $this->hasMany(Review::class)->where('is_approved', true);
+    }
+
+    public function favorites()
+    {
+        return $this->hasMany(Favorite::class);
+    }
+
+    // Scopes
+    public function scopePublished($query)
+    {
+        return $query->where('is_published', true)->whereNotNull('published_at');
+    }
+
+    public function scopeDraft($query)
+    {
+        return $query->where('is_published', false);
+    }
+
+    // Accessors
     public function getCoverImageUrlAttribute()
     {
         if ($this->cover_image) {
-            return asset('storage/' . $this->cover_image);
+            return Storage::url($this->cover_image);
         }
 
-        return asset('images/default-cover.png');
+        return asset('images/default-cover.jpg');
     }
 
-    /**
-     * Scope per fumetti pubblicati
-     */
-    public function scopePublished($query)
+    public function getAverageRatingAttribute()
     {
-        return $query->where('is_published', true);
-    }
-
-    /**
-     * Scope per cercare fumetti
-     */
-    public function scopeSearch($query, $search)
-    {
-        return $query->where(function ($q) use ($search) {
-            $q->where('title', 'like', "%{$search}%")
-              ->orWhere('plot', 'like', "%{$search}%")
-              ->orWhereHas('user', function ($userQuery) use ($search) {
-                  $userQuery->where('name', 'like', "%{$search}%");
-              });
-        });
-    }
-
-    /**
-     * Scope per filtrare per categoria
-     */
-    public function scopeByCategory($query, $categoryId)
-    {
-        return $query->whereHas('categories', function ($q) use ($categoryId) {
-            $q->where('categories.id', $categoryId);
-        });
-    }
-
-    /**
-     * Scope per filtrare per anno
-     */
-    public function scopeByYear($query, $year)
-    {
-        return $query->where('publication_year', $year);
-    }
-
-    /**
-     * Scope per filtrare per rivista
-     */
-    public function scopeByMagazine($query, $magazineId)
-    {
-        return $query->where('magazine_id', $magazineId);
-    }
-
-    /**
-     * Imposta automaticamente published_at quando is_published diventa true
-     */
-    protected static function boot()
-    {
-        parent::boot();
-
-        static::updating(function ($fumetto) {
-            if ($fumetto->is_published && $fumetto->getOriginal('is_published') === false) {
-                $fumetto->published_at = now();
-            } elseif (!$fumetto->is_published) {
-                $fumetto->published_at = null;
-            }
-        });
-
-        static::creating(function ($fumetto) {
-            if ($fumetto->is_published && !$fumetto->published_at) {
-                $fumetto->published_at = now();
-            }
-        });
-    }
-
-    /**
-     * Elimina l'immagine di copertina quando il fumetto viene eliminato
-     */
-    protected static function booted()
-    {
-        static::deleting(function ($fumetto) {
-            if ($fumetto->cover_image && Storage::disk('public')->exists($fumetto->cover_image)) {
-                Storage::disk('public')->delete($fumetto->cover_image);
-            }
-        });
+        return $this->approvedReviews()->avg('rating') ?? 0;
     }
 }

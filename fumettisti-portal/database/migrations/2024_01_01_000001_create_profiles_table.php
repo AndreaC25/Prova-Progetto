@@ -11,10 +11,14 @@ return new class extends Migration
         Schema::create('profiles', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->string('phone')->unique()->nullable();
-            $table->text('company_address')->nullable();
-            $table->string('profile_image')->nullable();
-            $table->text('description')->nullable();
+            $table->string('display_name')->nullable();
+            $table->text('bio')->nullable();
+            $table->string('avatar')->nullable();
+            $table->string('website')->nullable();
+            $table->json('social_links')->nullable();
+            $table->string('location')->nullable();
+            $table->date('birth_date')->nullable();
+            $table->boolean('is_public')->default(true);
             $table->timestamps();
         });
     }

@@ -2,183 +2,215 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Requests\FumettoStoreRequest;
-use App\Http\Requests\FumettoUpdateRequest;
 use App\Models\Fumetto;
 use App\Models\Category;
 use App\Models\Magazine;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage;
 
 class FumettoController extends Controller
 {
     /**
-     * Display a listing of the resource.
+     * Display a listing of fumetti
      */
     public function index(Request $request)
     {
         $query = Fumetto::with(['user', 'categories', 'magazine'])
-            ->published()
-            ->latest('published_at');
+            ->where('is_published', true)
+            ->withCount(['reviews', 'favorites']);
 
-        // Filtro per ricerca
+        // Search functionality
         if ($request->filled('search')) {
-            $query->search($request->search);
+            $search = $request->get('search');
+            $query->where(function($q) use ($search) {
+                $q->where('title', 'like', "%{$search}%")
+                  ->orWhere('plot', 'like', "%{$search}%");
+            });
         }
 
-        // Filtro per categoria
+        // Category filter
         if ($request->filled('category')) {
-            $query->byCategory($request->category);
+            $query->whereHas('categories', function($q) use ($request) {
+                $q->where('slug', $request->get('category'));
+            });
         }
 
-        // Filtro per anno
-        if ($request->filled('year')) {
-            $query->byYear($request->year);
+        // Sorting
+        switch ($request->get('sort', 'newest')) {
+            case 'oldest':
+                $query->orderBy('published_at', 'asc');
+                break;
+            case 'title':
+                $query->orderBy('title', 'asc');
+                break;
+            default: // newest
+                $query->orderBy('published_at', 'desc');
+                break;
         }
 
-        // Filtro per rivista
-        if ($request->filled('magazine')) {
-            $query->byMagazine($request->magazine);
-        }
+        $fumetti = $query->paginate(12)->appends($request->query());
 
-        $fumetti = $query->paginate(12)->withQueryString();
-
-        // Dati per i filtri
-        $categories = Category::orderBy('name')->get();
-        $magazines = Magazine::active()->orderBy('name')->get();
-        $years = Fumetto::published()
-            ->selectRaw('DISTINCT publication_year')
-            ->orderBy('publication_year', 'desc')
-            ->pluck('publication_year');
-
-        return view('fumetti.index', compact('fumetti', 'categories', 'magazines', 'years'));
+        return view('fumetti.index', compact('fumetti'));
     }
 
     /**
-     * Show the form for creating a new resource.
+     * Show the form for creating a new fumetto
      */
     public function create()
     {
         $categories = Category::orderBy('name')->get();
-        $magazines = Magazine::active()->orderBy('name')->get();
+        $magazines = Magazine::orderBy('name')->get();
 
         return view('fumetti.create', compact('categories', 'magazines'));
     }
 
     /**
-     * Store a newly created resource in storage.
+     * Store a newly created fumetto
      */
-    public function store(FumettoStoreRequest $request)
+    public function store(Request $request)
     {
-        $data = $request->validated();
-        $data['user_id'] = Auth::id();
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'plot' => 'required|string|min:50|max:2000',
+            'issue_number' => 'required|integer|min:1',
+            'publication_year' => 'required|integer|min:1900|max:' . (date('Y') + 5),
+            'price' => 'nullable|numeric|min:0|max:999.99',
+            'categories' => 'required|array|min:1',
+            'categories.*' => 'exists:categories,id',
+        ]);
 
-        // Gestione caricamento immagine di copertina
-        if ($request->hasFile('cover_image')) {
-            $imagePath = $request->file('cover_image')->store('cover-images', 'public');
-            $data['cover_image'] = $imagePath;
-        }
+        $fumetto = new Fumetto($validated);
+        $fumetto->user_id = Auth::id();
+        $fumetto->is_published = $request->get('is_published', false);
+        $fumetto->published_at = $fumetto->is_published ? now() : null;
+        $fumetto->save();
 
-        $fumetto = Fumetto::create($data);
+        // Attach categories
+        $fumetto->categories()->attach($validated['categories']);
 
-        // Associa le categorie selezionate
-        if ($request->filled('categories')) {
-            $fumetto->categories()->attach($request->categories);
-        }
+        $message = $fumetto->is_published
+            ? 'Fumetto pubblicato con successo!'
+            : 'Fumetto salvato come bozza.';
 
         return redirect()->route('fumetti.show', $fumetto)
-            ->with('success', 'Fumetto creato con successo!');
+            ->with('success', $message);
     }
 
     /**
-     * Display the specified resource.
+     * Display the specified fumetto
      */
     public function show(Fumetto $fumetto)
     {
-        $fumetto->load(['user.profile', 'categories', 'magazine']);
+        // Check if fumetto is published or belongs to current user
+        if (!$fumetto->is_published && (!Auth::check() || $fumetto->user_id !== Auth::id())) {
+            abort(404);
+        }
 
-        // Fumetti correlati dello stesso autore
-        $relatedFumetti = Fumetto::where('user_id', $fumetto->user_id)
-            ->where('id', '!=', $fumetto->id)
-            ->published()
-            ->take(4)
-            ->get();
+        $fumetto->load(['user', 'categories', 'magazine']);
 
-        return view('fumetti.show', compact('fumetto', 'relatedFumetti'));
+        return view('fumetti.show', compact('fumetto'));
     }
 
     /**
-     * Show the form for editing the specified resource.
+     * Show the form for editing the specified fumetto
      */
     public function edit(Fumetto $fumetto)
     {
-        // Autorizzazione: solo il proprietario può modificare
         if ($fumetto->user_id !== Auth::id()) {
-            abort(403, 'Non sei autorizzato a modificare questo fumetto.');
+            abort(403);
         }
 
         $categories = Category::orderBy('name')->get();
-        $magazines = Magazine::active()->orderBy('name')->get();
+        $magazines = Magazine::orderBy('name')->get();
 
         return view('fumetti.edit', compact('fumetto', 'categories', 'magazines'));
     }
 
     /**
-     * Update the specified resource in storage.
+     * Update the specified fumetto
      */
-    public function update(FumettoUpdateRequest $request, Fumetto $fumetto)
+    public function update(Request $request, Fumetto $fumetto)
     {
-        // Autorizzazione: solo il proprietario può modificare
         if ($fumetto->user_id !== Auth::id()) {
-            abort(403, 'Non sei autorizzato a modificare questo fumetto.');
+            abort(403);
         }
 
-        $data = $request->validated();
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'plot' => 'required|string|min:50|max:2000',
+            'issue_number' => 'required|integer|min:1',
+            'publication_year' => 'required|integer|min:1900|max:' . (date('Y') + 5),
+            'price' => 'nullable|numeric|min:0|max:999.99',
+            'categories' => 'required|array|min:1',
+            'categories.*' => 'exists:categories,id',
+        ]);
 
-        // Gestione caricamento nuova immagine di copertina
-        if ($request->hasFile('cover_image')) {
-            // Elimina la vecchia immagine se presente
-            if ($fumetto->cover_image && Storage::disk('public')->exists($fumetto->cover_image)) {
-                Storage::disk('public')->delete($fumetto->cover_image);
-            }
-
-            // Salva la nuova immagine
-            $imagePath = $request->file('cover_image')->store('cover-images', 'public');
-            $data['cover_image'] = $imagePath;
-        }
-
-        $fumetto->update($data);
-
-        // Aggiorna le categorie
-        if ($request->filled('categories')) {
-            $fumetto->categories()->sync($request->categories);
-        } else {
-            $fumetto->categories()->detach();
-        }
+        $fumetto->update($validated);
+        $fumetto->categories()->sync($validated['categories']);
 
         return redirect()->route('fumetti.show', $fumetto)
             ->with('success', 'Fumetto aggiornato con successo!');
     }
 
     /**
-     * Remove the specified resource from storage.
+     * Remove the specified fumetto
      */
     public function destroy(Fumetto $fumetto)
     {
-        // Autorizzazione: solo il proprietario può eliminare
         if ($fumetto->user_id !== Auth::id()) {
-            abort(403, 'Non sei autorizzato a eliminare questo fumetto.');
-        }
-
-        // Elimina l'immagine di copertina se presente
-        if ($fumetto->cover_image && Storage::disk('public')->exists($fumetto->cover_image)) {
-            Storage::disk('public')->delete($fumetto->cover_image);
+            abort(403);
         }
 
         $fumetto->delete();
 
-        return redirect()->route('profile.show')
-            ->with('success', 'Fumetto eliminato con successo!');
+        return redirect()->route('dashboard')
+            ->with('success', 'Fumetto eliminato con successo.');
+    }
+
+    /**
+     * Publish a fumetto
+     */
+    public function publish(Fumetto $fumetto)
+    {
+        if ($fumetto->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        $fumetto->update([
+            'is_published' => true,
+            'published_at' => now()
+        ]);
+
+        return back()->with('success', 'Fumetto pubblicato con successo!');
+    }
+
+    /**
+     * Unpublish a fumetto
+     */
+    public function unpublish(Fumetto $fumetto)
+    {
+        if ($fumetto->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        $fumetto->update([
+            'is_published' => false,
+            'published_at' => null
+        ]);
+
+        return back()->with('success', 'Fumetto rimosso dalla pubblicazione.');
+    }
+
+    /**
+     * Show user's fumetti dashboard
+     */
+    public function dashboard()
+    {
+        $fumetti = Auth::user()->fumetti()
+            ->withCount(['reviews', 'favorites'])
+            ->latest()
+            ->paginate(10);
+
+        return view('fumetti.dashboard', compact('fumetti'));
     }
 }

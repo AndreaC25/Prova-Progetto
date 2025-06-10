@@ -25,11 +25,12 @@ class ContactController extends Controller
     public function store(ContactStoreRequest $request)
     {
         // Salva il messaggio nel database
+        /** @var Contact $contact */
         $contact = Contact::create($request->validated());
 
         try {
             // Invia email di conferma all'utente
-            Mail::to($contact->email)->send(new ContactConfirm($contact));
+            Mail::to($contact->email)->send(new ContactConfirmation($contact));
 
             // Invia notifica agli amministratori
             $adminEmails = ['admin@fumettistiportal.it', 'info@fumettistiportal.it'];
@@ -43,7 +44,7 @@ class ContactController extends Controller
         } catch (\Exception $e) {
             // Se l'invio email fallisce, salva comunque il messaggio
             return redirect()->route('contact.create')
-                ->with('warning', 'Messaggio salvato, ma si è verificato un problema con l\'invio email. Ti contatteremo presto!')
+                ->with('warning', 'Messaggio salvato, ma si è verificato un problema con l\'invio email.')
                 ->withInput();
         }
     }
