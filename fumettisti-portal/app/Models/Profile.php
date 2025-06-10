@@ -11,16 +11,19 @@ class Profile extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'user_id',
-        'phone',
-        'company_address',
-        'avatar',
-        'bio',
-        'birth_date',
-        'website',
-        'social_links'
-    ];
+   protected $fillable = [
+    'user_id',
+    'display_name',        // Dalla migrazione esistente
+    'phone',              // NUOVO - telefono unico (da aggiungere con migrazione)
+    'company_address',    // NUOVO - indirizzo società (da aggiungere con migrazione)
+    'avatar',
+    'bio',
+    'birth_date',
+    'website',
+    'social_links',
+    'location',           // Dalla migrazione esistente
+    'is_public'           // Dalla migrazione esistente
+];
 
     protected $casts = [
         'birth_date' => 'date',
