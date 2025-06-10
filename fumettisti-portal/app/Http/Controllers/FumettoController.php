@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Auth;
 class FumettoController extends Controller
 {
     /**
-     * Display a listing of fumetti
+     * Display a listing of fumetti con paginazione
      */
     public function index(Request $request)
     {
@@ -43,14 +43,39 @@ class FumettoController extends Controller
             case 'title':
                 $query->orderBy('title', 'asc');
                 break;
+            case 'price_low':
+                $query->orderBy('price', 'asc');
+                break;
+            case 'price_high':
+                $query->orderBy('price', 'desc');
+                break;
+            case 'rating':
+                $query->withAvg('reviews', 'rating')
+                      ->orderByDesc('reviews_avg_rating');
+                break;
             default: // newest
                 $query->orderBy('published_at', 'desc');
                 break;
         }
 
-        $fumetti = $query->paginate(12)->appends($request->query());
+        // Paginazione: 10 fumetti per pagina
+        $fumetti = $query->paginate(10)->appends($request->query());
 
-        return view('fumetti.index', compact('fumetti'));
+        // Aggiungi rating HTML per ogni fumetto
+        $fumetti->getCollection()->transform(function ($fumetto) {
+            $fumetto->rating_html = $this->generateRatingHtml($fumetto);
+            return $fumetto;
+        });
+
+        // Ottieni categorie per il filtro
+        $categories = Category::where('is_active', true)
+            ->withCount(['fumetti' => function($query) {
+                $query->where('is_published', true);
+            }])
+            ->orderByDesc('fumetti_count')
+            ->get();
+
+        return view('fumetti.index', compact('fumetti', 'categories'));
     }
 
     /**
@@ -106,9 +131,27 @@ class FumettoController extends Controller
             abort(404);
         }
 
-        $fumetto->load(['user', 'categories', 'magazine']);
+        $fumetto->load(['user', 'categories', 'magazine', 'reviews.user']);
 
-        return view('fumetti.show', compact('fumetto'));
+        // Fumetti correlati (stessa categoria, escluso quello corrente)
+        $relatedFumetti = Fumetto::with(['user', 'categories'])
+            ->where('is_published', true)
+            ->where('id', '!=', $fumetto->id)
+            ->whereHas('categories', function($query) use ($fumetto) {
+                $query->whereIn('categories.id', $fumetto->categories->pluck('id'));
+            })
+            ->withCount(['reviews', 'favorites'])
+            ->inRandomOrder()
+            ->take(4)
+            ->get();
+
+        // Aggiungi rating HTML
+        $relatedFumetti->transform(function ($item) {
+            $item->rating_html = $this->generateRatingHtml($item);
+            return $item;
+        });
+
+        return view('fumetti.show', compact('fumetto', 'relatedFumetti'));
     }
 
     /**
@@ -212,5 +255,35 @@ class FumettoController extends Controller
             ->paginate(10);
 
         return view('fumetti.dashboard', compact('fumetti'));
+    }
+
+    /**
+     * Genera HTML per le stelle di rating
+     */
+    private function generateRatingHtml($fumetto)
+    {
+        $averageRating = $fumetto->reviews()->avg('rating') ?? 0;
+        $fullStars = floor($averageRating);
+        $hasHalfStar = ($averageRating - $fullStars) >= 0.5;
+        $emptyStars = 5 - $fullStars - ($hasHalfStar ? 1 : 0);
+
+        $html = '';
+
+        // Stelle piene
+        for ($i = 0; $i < $fullStars; $i++) {
+            $html .= '<i class="fas fa-star text-warning"></i>';
+        }
+
+        // Stella mezza
+        if ($hasHalfStar) {
+            $html .= '<i class="fas fa-star-half-alt text-warning"></i>';
+        }
+
+        // Stelle vuote
+        for ($i = 0; $i < $emptyStars; $i++) {
+            $html .= '<i class="far fa-star text-warning"></i>';
+        }
+
+        return $html;
     }
 }

@@ -14,7 +14,13 @@ class Category extends Model
         'name',
         'slug',
         'description',
-        'color'
+        'icon',
+        'color',
+        'is_active'
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean'
     ];
 
     /**
@@ -22,7 +28,24 @@ class Category extends Model
      */
     public function fumetti()
     {
-        return $this->belongsToMany(Fumetto::class, 'fumetto_category');
+        return $this->belongsToMany(Fumetto::class, 'fumetto_categories');
+    }
+
+    /**
+     * Solo fumetti pubblicati
+     */
+    public function publishedFumetti()
+    {
+        return $this->belongsToMany(Fumetto::class, 'fumetto_categories')
+                    ->where('is_published', true);
+    }
+
+    /**
+     * Scope per categorie attive
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
     }
 
     /**
@@ -51,5 +74,13 @@ class Category extends Model
     public function scopeSearch($query, $search)
     {
         return $query->where('name', 'like', "%{$search}%");
+    }
+
+    /**
+     * Usa slug per le route
+     */
+    public function getRouteKeyName()
+    {
+        return 'slug';
     }
 }
